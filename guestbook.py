@@ -17,9 +17,19 @@
 
 import jinja2
 import os
+import cloudstorage as gcs
+import logging
 import webapp2
 
 from google.appengine.ext import ndb
+
+BUCKET_NAME = 'your_bucket_name'
+
+MY_DEFAULT_RETRY_PARAMS = gcs.RetryParams(initial_delay=0.2,
+                                          max_delay=5.0,
+                                          backoff_factor=2,
+                                          max_retry_period=15)
+gcs.set_default_retry_params(MY_DEFAULT_RETRY_PARAMS)
 
 
 def guestbook_key(guestbook_name='default_guestbook'):
@@ -48,7 +58,36 @@ class MainPage(webapp2.RequestHandler):
         greeting = Greeting(parent=guestbook_key())
         greeting.content = self.request.get('entry')
         greeting.put()
+
+        filename = '/' + BUCKET_NAME + '/' + str(greeting.date)
+        content = str(greeting.content)
+
+        try:
+            self.create_file(filename, content)
+
+        except Exception, error:
+            logging.exception(error)
+            self.delete_file(filename)
+
+        else:
+            logging.info('The object was created in Google Cloud Storage')
         self.redirect('/')
+
+    def create_file(self, filename, content):
+        write_retry_params = gcs.RetryParams(backoff_factor=1.1)
+        gcs_file = gcs.open(filename,
+                            'w',
+                            content_type='text/plain',
+                            retry_params=write_retry_params)
+        gcs_file.write(content)
+        gcs_file.close()
+
+    def delete_file(self, filename):
+        try:
+            gcs.delete(filename)
+        except gcs.NotFoundError:
+            pass
+        logging.info('There was an error writing to Google Cloud Storage')
 
 
 class Clear(webapp2.RequestHandler):
